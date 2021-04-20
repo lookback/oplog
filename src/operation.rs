@@ -9,7 +9,7 @@
 use std::fmt;
 
 use bson::{Bson, Document};
-use chrono::{DateTime, UTC, TimeZone};
+use chrono::{DateTime, TimeZone, UTC};
 use {Error, Result};
 
 /// A MongoDB oplog operation.
@@ -203,9 +203,10 @@ impl Operation {
 
         match o.get_array("applyOps") {
             Ok(ops) => {
-                let operations = ops.iter()
-                                    .map(|bson| Operation::from_bson(bson))
-                                    .collect::<Result<Vec<Operation>>>()?;
+                let operations = ops
+                    .iter()
+                    .map(|bson| Operation::from_bson(bson))
+                    .collect::<Result<Vec<Operation>>>()?;
 
                 Ok(Operation::ApplyOps {
                     id: h,
@@ -214,14 +215,12 @@ impl Operation {
                     operations: operations,
                 })
             }
-            Err(_) => {
-                Ok(Operation::Command {
-                    id: h,
-                    timestamp: timestamp_to_datetime(ts),
-                    namespace: ns.into(),
-                    command: o.to_owned(),
-                })
-            }
+            Err(_) => Ok(Operation::Command {
+                id: h,
+                timestamp: timestamp_to_datetime(ts),
+                namespace: ns.into(),
+                command: o.to_owned(),
+            }),
         }
     }
 }
@@ -229,49 +228,76 @@ impl Operation {
 impl fmt::Display for Operation {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
-            Operation::Noop { id, timestamp, ref message } => {
+            Operation::Noop {
+                id,
+                timestamp,
+                ref message,
+            } => {
                 write!(f, "No-op #{} at {}: {}", id, timestamp, message)
             }
-            Operation::Insert { id, timestamp, ref namespace, ref document } => {
-                write!(f,
-                       "Insert #{} into {} at {}: {}",
-                       id,
-                       namespace,
-                       timestamp,
-                       document)
+            Operation::Insert {
+                id,
+                timestamp,
+                ref namespace,
+                ref document,
+            } => {
+                write!(
+                    f,
+                    "Insert #{} into {} at {}: {}",
+                    id, namespace, timestamp, document
+                )
             }
-            Operation::Update { id, timestamp, ref namespace, ref query, ref update } => {
-                write!(f,
-                       "Update #{} {} with {} at {}: {}",
-                       id,
-                       namespace,
-                       query,
-                       timestamp,
-                       update)
+            Operation::Update {
+                id,
+                timestamp,
+                ref namespace,
+                ref query,
+                ref update,
+            } => {
+                write!(
+                    f,
+                    "Update #{} {} with {} at {}: {}",
+                    id, namespace, query, timestamp, update
+                )
             }
-            Operation::Delete { id, timestamp, ref namespace, ref query } => {
-                write!(f,
-                       "Delete #{} from {} at {}: {}",
-                       id,
-                       namespace,
-                       timestamp,
-                       query)
+            Operation::Delete {
+                id,
+                timestamp,
+                ref namespace,
+                ref query,
+            } => {
+                write!(
+                    f,
+                    "Delete #{} from {} at {}: {}",
+                    id, namespace, timestamp, query
+                )
             }
-            Operation::Command { id, timestamp, ref namespace, ref command } => {
-                write!(f,
-                       "Command #{} {} at {}: {}",
-                       id,
-                       namespace,
-                       timestamp,
-                       command)
+            Operation::Command {
+                id,
+                timestamp,
+                ref namespace,
+                ref command,
+            } => {
+                write!(
+                    f,
+                    "Command #{} {} at {}: {}",
+                    id, namespace, timestamp, command
+                )
             }
-            Operation::ApplyOps { id, timestamp, ref namespace, ref operations } => {
-                write!(f,
-                       "ApplyOps #{} {} at {}: {} operations",
-                       id,
-                       namespace,
-                       timestamp,
-                       operations.len())
+            Operation::ApplyOps {
+                id,
+                timestamp,
+                ref namespace,
+                ref operations,
+            } => {
+                write!(
+                    f,
+                    "ApplyOps #{} {} at {}: {} operations",
+                    id,
+                    namespace,
+                    timestamp,
+                    operations.len()
+                )
             }
         }
     }
@@ -287,10 +313,10 @@ fn timestamp_to_datetime(timestamp: i64) -> DateTime<UTC> {
 
 #[cfg(test)]
 mod tests {
-    use Error;
-    use bson::{Bson, ValueAccessError};
-    use chrono::{UTC, TimeZone};
     use super::Operation;
+    use bson::{Bson, ValueAccessError};
+    use chrono::{TimeZone, UTC};
+    use Error;
 
     #[test]
     fn operation_converts_noops() {
@@ -306,12 +332,14 @@ mod tests {
         };
         let operation = Operation::new(&doc).unwrap();
 
-        assert_eq!(operation,
-                   Operation::Noop {
-                       id: -2135725856567446411i64,
-                       timestamp: UTC.timestamp(1479419535, 0),
-                       message: "initiating set".into(),
-                   });
+        assert_eq!(
+            operation,
+            Operation::Noop {
+                id: -2135725856567446411i64,
+                timestamp: UTC.timestamp(1479419535, 0),
+                message: "initiating set".into(),
+            }
+        );
     }
 
     #[test]
@@ -328,13 +356,15 @@ mod tests {
         };
         let operation = Operation::new(&doc).unwrap();
 
-        assert_eq!(operation,
-                   Operation::Insert {
-                       id: -1742072865587022793i64,
-                       timestamp: UTC.timestamp(1479561394, 0),
-                       namespace: "foo.bar".into(),
-                       document: doc! { "foo" => "bar" },
-                   });
+        assert_eq!(
+            operation,
+            Operation::Insert {
+                id: -1742072865587022793i64,
+                timestamp: UTC.timestamp(1479561394, 0),
+                namespace: "foo.bar".into(),
+                document: doc! { "foo" => "bar" },
+            }
+        );
     }
 
     #[test]
@@ -356,14 +386,16 @@ mod tests {
         };
         let operation = Operation::new(&doc).unwrap();
 
-        assert_eq!(operation,
-                   Operation::Update {
-                       id: 3511341713062188019i64,
-                       timestamp: UTC.timestamp(1479561033, 0),
-                       namespace: "foo.bar".into(),
-                       query: doc! { "_id" => 1 },
-                       update: doc! { "$set" => { "foo" => "baz" } },
-                   });
+        assert_eq!(
+            operation,
+            Operation::Update {
+                id: 3511341713062188019i64,
+                timestamp: UTC.timestamp(1479561033, 0),
+                namespace: "foo.bar".into(),
+                query: doc! { "_id" => 1 },
+                update: doc! { "$set" => { "foo" => "baz" } },
+            }
+        );
     }
 
     #[test]
@@ -380,13 +412,15 @@ mod tests {
         };
         let operation = Operation::new(&doc).unwrap();
 
-        assert_eq!(operation,
-                   Operation::Delete {
-                       id: -5457382347563537847i64,
-                       timestamp: UTC.timestamp(1479421186, 0),
-                       namespace: "foo.bar".into(),
-                       query: doc! { "_id" => 1 },
-                   });
+        assert_eq!(
+            operation,
+            Operation::Delete {
+                id: -5457382347563537847i64,
+                timestamp: UTC.timestamp(1479421186, 0),
+                namespace: "foo.bar".into(),
+                query: doc! { "_id" => 1 },
+            }
+        );
     }
 
     #[test]
@@ -403,13 +437,15 @@ mod tests {
         };
         let operation = Operation::new(&doc).unwrap();
 
-        assert_eq!(operation,
-                   Operation::Command {
-                       id: -7222343681970774929i64,
-                       timestamp: UTC.timestamp(1479553955, 0),
-                       namespace: "test.$cmd".into(),
-                       command: doc! { "create" => "foo" },
-                   });
+        assert_eq!(
+            operation,
+            Operation::Command {
+                id: -7222343681970774929i64,
+                timestamp: UTC.timestamp(1479553955, 0),
+                namespace: "test.$cmd".into(),
+                command: doc! { "create" => "foo" },
+            }
+        );
     }
 
     #[test]
@@ -460,17 +496,19 @@ mod tests {
         };
         let operation = Operation::new(&doc).unwrap();
 
-        assert_eq!(operation,
-                   Operation::ApplyOps {
-                       id: -3262249347345468996i64,
-                       timestamp: UTC.timestamp(1483789052, 0),
-                       namespace: "foo.$cmd".into(),
-                       operations: vec![Operation::Insert {
-                                            id: -1742072865587022793i64,
-                                            timestamp: UTC.timestamp(1479561394, 0),
-                                            namespace: "foo.bar".into(),
-                                            document: doc! { "_id" => 1, "foo" => "bar" },
-                                        }],
-                   });
+        assert_eq!(
+            operation,
+            Operation::ApplyOps {
+                id: -3262249347345468996i64,
+                timestamp: UTC.timestamp(1483789052, 0),
+                namespace: "foo.$cmd".into(),
+                operations: vec![Operation::Insert {
+                    id: -1742072865587022793i64,
+                    timestamp: UTC.timestamp(1479561394, 0),
+                    namespace: "foo.bar".into(),
+                    document: doc! { "_id" => 1, "foo" => "bar" },
+                }],
+            }
+        );
     }
 }

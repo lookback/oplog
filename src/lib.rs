@@ -50,8 +50,8 @@
 
 #[macro_use]
 extern crate bson;
-extern crate mongodb;
 extern crate chrono;
+extern crate mongodb;
 
 use std::error;
 use std::fmt;

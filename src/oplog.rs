@@ -2,7 +2,7 @@
 //! any optional filtering criteria applied.
 
 use bson::Document;
-use mongodb::coll::options::{FindOptions, CursorType};
+use mongodb::coll::options::{CursorType, FindOptions};
 use mongodb::cursor::Cursor;
 use mongodb::db::ThreadedDatabase;
 use mongodb::{Client, ThreadedClient};
