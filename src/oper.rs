@@ -8,9 +8,10 @@
 
 use std::fmt;
 
+use crate::{Error, Result};
 use bson::{Bson, Document};
-use chrono::{DateTime, TimeZone, UTC};
-use {Error, Result};
+use chrono::{DateTime, TimeZone, Utc};
+use mongodb::bson;
 
 /// A MongoDB oplog operation.
 #[derive(Clone, Debug, PartialEq)]
@@ -20,7 +21,7 @@ pub enum Operation {
         /// A unique identifier for this operation.
         id: i64,
         /// The time of the operation.
-        timestamp: DateTime<UTC>,
+        timestamp: DateTime<Utc>,
         /// The message associated with this operation.
         message: String,
     },
@@ -29,7 +30,7 @@ pub enum Operation {
         /// A unique identifier for this operation.
         id: i64,
         /// The time of the operation.
-        timestamp: DateTime<UTC>,
+        timestamp: DateTime<Utc>,
         /// The full namespace of the operation including its database and collection.
         namespace: String,
         /// The BSON document inserted into the namespace.
@@ -40,7 +41,7 @@ pub enum Operation {
         /// A unique identifier for this operation.
         id: i64,
         /// The time of the operation.
-        timestamp: DateTime<UTC>,
+        timestamp: DateTime<Utc>,
         /// The full namespace of the operation including its database and collection.
         namespace: String,
         /// The BSON selection criteria for the update.
@@ -53,7 +54,7 @@ pub enum Operation {
         /// A unique identifier for this operation.
         id: i64,
         /// The time of the operation.
-        timestamp: DateTime<UTC>,
+        timestamp: DateTime<Utc>,
         /// The full namespace of the operation including its database and collection.
         namespace: String,
         /// The BSON selection criteria for the delete.
@@ -64,7 +65,7 @@ pub enum Operation {
         /// A unique identifier for this operation.
         id: i64,
         /// The time of the operation.
-        timestamp: DateTime<UTC>,
+        timestamp: DateTime<Utc>,
         /// The full namespace of the operation including its database and collection.
         namespace: String,
         /// The BSON command.
@@ -75,7 +76,7 @@ pub enum Operation {
         /// A unique identifier for this operation.
         id: i64,
         /// The time of the operation.
-        timestamp: DateTime<UTC>,
+        timestamp: DateTime<Utc>,
         /// The full namespace of the operation including its database and collection.
         namespace: String,
         /// A vector of operations to apply.
@@ -90,20 +91,21 @@ impl Operation {
     ///
     /// ```
     /// # #[macro_use]
-    /// # extern crate bson;
-    /// # extern crate oplog;
-    /// # use bson::Bson;
+    /// # use oplog::bson::{self, Bson, doc};
     /// use oplog::Operation;
     ///
     /// # fn main() {
     /// let document = doc! {
-    ///     "ts" => (Bson::TimeStamp(1479561394 << 32)),
-    ///     "h" => (-1742072865587022793i64),
-    ///     "v" => 2,
-    ///     "op" => "i",
-    ///     "ns" => "foo.bar",
-    ///     "o" => {
-    ///         "foo" => "bar"
+    ///     "ts": Bson::Timestamp(bson::Timestamp {
+    ///         time: 1479561394,
+    ///         increment: 0,
+    ///     }),
+    ///     "h": (-1742072865587022793i64),
+    ///     "v": 2,
+    ///     "op": "i",
+    ///     "ns": "foo.bar",
+    ///     "o": {
+    ///         "foo": "bar"
     ///     }
     /// };
     /// let operation = Operation::new(&document);
@@ -133,7 +135,7 @@ impl Operation {
     /// Returns a no-op operation for a given document.
     fn from_noop(document: &Document) -> Result<Operation> {
         let h = document.get_i64("h")?;
-        let ts = document.get_time_stamp("ts")?;
+        let ts = document.get_timestamp("ts")?;
         let o = document.get_document("o")?;
         let msg = o.get_str("msg")?;
 
@@ -147,7 +149,7 @@ impl Operation {
     /// Return an insert operation for a given document.
     fn from_insert(document: &Document) -> Result<Operation> {
         let h = document.get_i64("h")?;
-        let ts = document.get_time_stamp("ts")?;
+        let ts = document.get_timestamp("ts")?;
         let ns = document.get_str("ns")?;
         let o = document.get_document("o")?;
 
@@ -162,7 +164,7 @@ impl Operation {
     /// Return an update operation for a given document.
     fn from_update(document: &Document) -> Result<Operation> {
         let h = document.get_i64("h")?;
-        let ts = document.get_time_stamp("ts")?;
+        let ts = document.get_timestamp("ts")?;
         let ns = document.get_str("ns")?;
         let o = document.get_document("o")?;
         let o2 = document.get_document("o2")?;
@@ -179,7 +181,7 @@ impl Operation {
     /// Return a delete operation for a given document.
     fn from_delete(document: &Document) -> Result<Operation> {
         let h = document.get_i64("h")?;
-        let ts = document.get_time_stamp("ts")?;
+        let ts = document.get_timestamp("ts")?;
         let ns = document.get_str("ns")?;
         let o = document.get_document("o")?;
 
@@ -197,7 +199,7 @@ impl Operation {
     /// successful.
     fn from_command(document: &Document) -> Result<Operation> {
         let h = document.get_i64("h")?;
-        let ts = document.get_time_stamp("ts")?;
+        let ts = document.get_timestamp("ts")?;
         let ns = document.get_str("ns")?;
         let o = document.get_document("o")?;
 
@@ -304,30 +306,31 @@ impl fmt::Display for Operation {
 }
 
 /// Convert a BSON timestamp into a UTC `DateTime`.
-fn timestamp_to_datetime(timestamp: i64) -> DateTime<UTC> {
-    let seconds = timestamp >> 32;
-    let nanoseconds = ((timestamp & 0xFFFFFFFF) * 1000000) as u32;
+fn timestamp_to_datetime(timestamp: bson::Timestamp) -> DateTime<Utc> {
+    let seconds = timestamp.time;
+    let nanoseconds = timestamp.increment;
 
-    UTC.timestamp(seconds, nanoseconds)
+    Utc.timestamp(seconds as i64, nanoseconds)
 }
 
 #[cfg(test)]
 mod tests {
-    use super::Operation;
-    use bson::{Bson, ValueAccessError};
-    use chrono::{TimeZone, UTC};
-    use Error;
+    use super::*;
+    use bson::doc;
 
     #[test]
     fn operation_converts_noops() {
         let doc = doc! {
-            "ts" => (Bson::TimeStamp(1479419535 << 32)),
-            "h" => (-2135725856567446411i64),
-            "v" => 2,
-            "op" => "n",
-            "ns" => "",
-            "o" => {
-                "msg" => "initiating set"
+            "ts" : Bson::Timestamp(bson::Timestamp {
+                time: 1479419535 ,
+                increment: 0,
+            }),
+            "h" : (-2135725856567446411i64),
+            "v" : 2,
+            "op" : "n",
+            "ns" : "",
+            "o" : {
+                "msg" : "initiating set"
             }
         };
         let operation = Operation::new(&doc).unwrap();
@@ -336,7 +339,7 @@ mod tests {
             operation,
             Operation::Noop {
                 id: -2135725856567446411i64,
-                timestamp: UTC.timestamp(1479419535, 0),
+                timestamp: Utc.timestamp(1479419535, 0),
                 message: "initiating set".into(),
             }
         );
@@ -345,13 +348,16 @@ mod tests {
     #[test]
     fn operation_converts_inserts() {
         let doc = doc! {
-            "ts" => (Bson::TimeStamp(1479561394 << 32)),
-            "h" => (-1742072865587022793i64),
-            "v" => 2,
-            "op" => "i",
-            "ns" => "foo.bar",
-            "o" => {
-                "foo" => "bar"
+            "ts" : Bson::Timestamp(bson::Timestamp {
+                time: 1479561394 ,
+                increment:0
+            }),
+            "h" : (-1742072865587022793i64),
+            "v" : 2,
+            "op" : "i",
+            "ns" : "foo.bar",
+            "o" : {
+                "foo" : "bar"
             }
         };
         let operation = Operation::new(&doc).unwrap();
@@ -360,9 +366,9 @@ mod tests {
             operation,
             Operation::Insert {
                 id: -1742072865587022793i64,
-                timestamp: UTC.timestamp(1479561394, 0),
+                timestamp: Utc.timestamp(1479561394, 0),
                 namespace: "foo.bar".into(),
-                document: doc! { "foo" => "bar" },
+                document: doc! { "foo" : "bar" },
             }
         );
     }
@@ -370,17 +376,20 @@ mod tests {
     #[test]
     fn operation_converts_updates() {
         let doc = doc! {
-            "ts" => (Bson::TimeStamp(1479561033 << 32)),
-            "h" => (3511341713062188019i64),
-            "v" => 2,
-            "op" => "u",
-            "ns" => "foo.bar",
-            "o2" => {
-                "_id" => 1
+            "ts" : Bson::Timestamp(bson::Timestamp {
+                time: 1479561033 ,
+                increment: 0,
+            }),
+            "h" : (3511341713062188019i64),
+            "v" : 2,
+            "op" : "u",
+            "ns" : "foo.bar",
+            "o2" : {
+                "_id" : 1
             },
-            "o" => {
-                "$set" => {
-                    "foo" => "baz"
+            "o" : {
+                "$set" : {
+                    "foo" : "baz"
                 }
             }
         };
@@ -390,10 +399,10 @@ mod tests {
             operation,
             Operation::Update {
                 id: 3511341713062188019i64,
-                timestamp: UTC.timestamp(1479561033, 0),
+                timestamp: Utc.timestamp(1479561033, 0),
                 namespace: "foo.bar".into(),
-                query: doc! { "_id" => 1 },
-                update: doc! { "$set" => { "foo" => "baz" } },
+                query: doc! { "_id" : 1 },
+                update: doc! { "$set" : { "foo" : "baz" } },
             }
         );
     }
@@ -401,13 +410,16 @@ mod tests {
     #[test]
     fn operation_converts_deletes() {
         let doc = doc! {
-            "ts" => (Bson::TimeStamp(1479421186 << 32)),
-            "h" => (-5457382347563537847i64),
-            "v" => 2,
-            "op" => "d",
-            "ns" => "foo.bar",
-            "o" => {
-                "_id" => 1
+            "ts" : Bson::Timestamp(bson::Timestamp {
+                time: 1479421186 ,
+                increment: 0,
+            }),
+            "h" : (-5457382347563537847i64),
+            "v" : 2,
+            "op" : "d",
+            "ns" : "foo.bar",
+            "o" : {
+                "_id" : 1
             }
         };
         let operation = Operation::new(&doc).unwrap();
@@ -416,9 +428,9 @@ mod tests {
             operation,
             Operation::Delete {
                 id: -5457382347563537847i64,
-                timestamp: UTC.timestamp(1479421186, 0),
+                timestamp: Utc.timestamp(1479421186, 0),
                 namespace: "foo.bar".into(),
-                query: doc! { "_id" => 1 },
+                query: doc! { "_id" : 1 },
             }
         );
     }
@@ -426,13 +438,16 @@ mod tests {
     #[test]
     fn operation_converts_commands() {
         let doc = doc! {
-            "ts" => (Bson::TimeStamp(1479553955 << 32)),
-            "h" => (-7222343681970774929i64),
-            "v" => 2,
-            "op" => "c",
-            "ns" => "test.$cmd",
-            "o" => {
-                "create" => "foo"
+            "ts" : Bson::Timestamp(bson::Timestamp {
+                time: 1479553955 ,
+                increment: 0,
+            }),
+            "h" : (-7222343681970774929i64),
+            "v" : 2,
+            "op" : "c",
+            "ns" : "test.$cmd",
+            "o" : {
+                "create" : "foo"
             }
         };
         let operation = Operation::new(&doc).unwrap();
@@ -441,16 +456,16 @@ mod tests {
             operation,
             Operation::Command {
                 id: -7222343681970774929i64,
-                timestamp: UTC.timestamp(1479553955, 0),
+                timestamp: Utc.timestamp(1479553955, 0),
                 namespace: "test.$cmd".into(),
-                command: doc! { "create" => "foo" },
+                command: doc! { "create" : "foo" },
             }
         );
     }
 
     #[test]
     fn operation_returns_unknown_operations() {
-        let doc = doc! { "op" => "x" };
+        let doc = doc! { "op" : "x" };
         let operation = Operation::new(&doc);
 
         match operation {
@@ -461,7 +476,9 @@ mod tests {
 
     #[test]
     fn operation_returns_missing_fields() {
-        let doc = doc! { "foo" => "bar" };
+        use bson::document::ValueAccessError;
+
+        let doc = doc! { "foo" : "bar" };
         let operation = Operation::new(&doc);
 
         match operation {
@@ -473,22 +490,28 @@ mod tests {
     #[test]
     fn operation_returns_apply_ops() {
         let doc = doc! {
-            "ts" => (Bson::TimeStamp(1483789052 << 32)),
-            "h" => (-3262249347345468996i64),
-            "v" => 2,
-            "op" => "c",
-            "ns" => "foo.$cmd",
-            "o" => {
-                "applyOps" => [
+            "ts" : Bson::Timestamp(bson::Timestamp {
+                time: 1483789052 ,
+                increment: 0,
+            }),
+            "h" : (-3262249347345468996i64),
+            "v" : 2,
+            "op" : "c",
+            "ns" : "foo.$cmd",
+            "o" : {
+                "applyOps" : [
                     {
-                        "ts" => (Bson::TimeStamp(1479561394 << 32)),
-                        "t" => 2,
-                        "h" => (-1742072865587022793i64),
-                        "op" => "i",
-                        "ns" => "foo.bar",
-                        "o" => {
-                            "_id" => 1,
-                            "foo" => "bar"
+                        "ts" : Bson::Timestamp(bson::Timestamp {
+                            time: 1479561394 ,
+                            increment: 0,
+                        }),
+                        "t" : 2,
+                        "h" : (-1742072865587022793i64),
+                        "op" : "i",
+                        "ns" : "foo.bar",
+                        "o" : {
+                            "_id" : 1,
+                            "foo" : "bar"
                         }
                     }
                 ]
@@ -500,13 +523,13 @@ mod tests {
             operation,
             Operation::ApplyOps {
                 id: -3262249347345468996i64,
-                timestamp: UTC.timestamp(1483789052, 0),
+                timestamp: Utc.timestamp(1483789052, 0),
                 namespace: "foo.$cmd".into(),
                 operations: vec![Operation::Insert {
                     id: -1742072865587022793i64,
-                    timestamp: UTC.timestamp(1479561394, 0),
+                    timestamp: Utc.timestamp(1479561394, 0),
                     namespace: "foo.bar".into(),
-                    document: doc! { "_id" => 1, "foo" => "bar" },
+                    document: doc! { "_id" : 1, "foo" : "bar" },
                 }],
             }
         );

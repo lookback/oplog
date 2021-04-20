@@ -10,19 +10,20 @@
 //! At its most basic, an `Oplog` will yield _all_ operations in the oplog when iterated over:
 //!
 //! ```rust,no_run
-//! # extern crate mongodb;
-//! # extern crate oplog;
-//! use mongodb::{Client, ThreadedClient};
+//! use futures::StreamExt;
+//! use mongodb::Client;
 //! use oplog::Oplog;
 //!
-//! # fn main() {
-//! let client = Client::connect("localhost", 27017).expect("Failed to connect to MongoDB.");
+//! # async fn run() -> Result<(), oplog::Error> {
+//! let client = Client::with_uri_str("mongodb://localhost").await?;
 //!
-//! if let Ok(oplog) = Oplog::new(&client) {
-//!     for operation in oplog {
-//!         // Do something with operation...
-//!     }
+//! let mut oplog = Oplog::new(&client).await?;
+//!
+//! while let Some(res) = oplog.next().await {
+//!     let oper = res?;
+//!     println!("{:?}", oper);
 //! }
+//! # Ok(())
 //! # }
 //! ```
 //!
@@ -30,87 +31,154 @@
 //! operations yielded:
 //!
 //! ```rust,no_run
-//! # #[macro_use]
-//! # extern crate bson;
-//! # extern crate mongodb;
-//! # extern crate oplog;
-//! use mongodb::{Client, ThreadedClient};
-//! use oplog::OplogBuilder;
+//! use futures::StreamExt;
+//! use mongodb::bson::doc;
+//! use mongodb::Client;
+//! use oplog::Oplog;
+//! use std::process;
 //!
-//! # fn main() {
-//! let client = Client::connect("localhost", 27017).expect("Failed to connect to MongoDB.");
+//! # async fn run() -> Result<(), oplog::Error> {
+//! let client = Client::with_uri_str("mongodb://localhost").await?;
 //!
-//! if let Ok(oplog) = OplogBuilder::new(&client).filter(Some(doc! { "op" => "i" })).build() {
-//!     for insert in oplog {
-//!         // Do something with insert operation...
-//!     }
+//! let mut oplog = Oplog::builder()
+//!     .filter(Some(doc! { "op": "i" }))
+//!     .build(&client)
+//!     .await?;
+//!
+//! while let Some(res) = oplog.next().await {
+//!     let oper = res?;
+//!     println!("{:?}", oper);
 //! }
+//!
+//! # Ok(())
 //! # }
 //! ```
 
-#[macro_use]
-extern crate bson;
-extern crate chrono;
-extern crate mongodb;
+use bson::Document;
+use futures::ready;
+use futures::Stream;
+use mongodb::options::{CursorType, FindOptions};
+use mongodb::Client;
+use mongodb::Cursor;
+use std::pin::Pin;
+use std::task::{Context, Poll};
 
-use std::error;
-use std::fmt;
-use std::result;
+pub use oper::Operation;
 
-pub use operation::Operation;
-pub use oplog::{Oplog, OplogBuilder};
+pub use mongodb;
+pub use mongodb::bson;
 
-mod operation;
-mod oplog;
+mod error;
+mod oper;
 
-/// A type alias for convenience so we can fix the error to our own `Error` type.
-pub type Result<T> = result::Result<T, Error>;
+pub use error::{Error, Result};
 
-/// Error enumerates the list of possible error conditions when tailing an oplog.
-#[derive(Debug)]
-pub enum Error {
-    /// A database connectivity error raised by the MongoDB driver.
-    Database(mongodb::Error),
-    /// An error when converting a BSON document to an `Operation` and it has a missing field or
-    /// unexpected type.
-    MissingField(bson::ValueAccessError),
-    /// An error when converting a BSON document to an `Operation` and it has an unsupported
-    /// operation type.
-    UnknownOperation(String),
-    /// An error when converting an applyOps command with invalid documents.
-    InvalidOperation,
+/// Oplog represents a MongoDB replica set oplog.
+///
+/// It implements the `Iterator` trait so it can be iterated over, yielding successive `Operation`s
+/// as they are read from the server. This will effectively iterate forever as it will await new
+/// operations.
+///
+/// Any errors raised while tailing the oplog (e.g. a connectivity issue) will cause the iteration
+/// to end.
+pub struct Oplog {
+    /// The internal MongoDB cursor for the current position in the oplog.
+    cursor: Cursor<bson::Document>,
 }
 
-impl error::Error for Error {
-    fn description(&self) -> &str {
-        match *self {
-            Error::Database(ref err) => err.description(),
-            Error::MissingField(ref err) => err.description(),
-            Error::UnknownOperation(_) => "unknown operation type",
-            Error::InvalidOperation => "invalid operation",
+impl Oplog {
+    /// Creates an instance with default options.
+    pub async fn new(client: &Client) -> Result<Oplog> {
+        OplogBuilder::new().build(client).await
+    }
+
+    /// Builder to configure the Oplog.
+    pub fn builder() -> OplogBuilder {
+        OplogBuilder::new()
+    }
+}
+
+impl Stream for Oplog {
+    type Item = Result<Operation>;
+
+    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        let this = self.get_mut();
+
+        loop {
+            let ret = if let Some(res) = ready!(Pin::new(&mut this.cursor).poll_next(cx)) {
+                match res {
+                    Ok(v) => match Operation::new(&v) {
+                        Ok(o) => Some(Ok(o)).into(),
+                        Err(e) => Some(Err(e)).into(),
+                    },
+                    Err(e) => Some(Err(e.into())).into(),
+                }
+            } else {
+                // Underlying cursor is over. This probably indicates that the oplog.rs collection
+                // is empty. See https://jira.mongodb.org/browse/SERVER-13955
+                None.into()
+            };
+
+            break ret;
         }
     }
 }
 
-impl fmt::Display for Error {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match *self {
-            Error::Database(ref err) => err.fmt(f),
-            Error::MissingField(ref err) => err.fmt(f),
-            Error::UnknownOperation(ref op) => write!(f, "Unknown operation type found: {}", op),
-            Error::InvalidOperation => write!(f, "Invalid operation"),
-        }
-    }
+/// A builder for an `Oplog`.
+///
+/// This builder enables configuring a filter on the oplog so that only operations matching a given
+/// criteria are returned (e.g. to set a start time or filter out unwanted operation types).
+///
+/// The lifetime `'a` refers to the lifetime of the MongoDB client.
+#[derive(Clone)]
+pub struct OplogBuilder {
+    filter: Option<Document>,
 }
 
-impl From<bson::ValueAccessError> for Error {
-    fn from(original: bson::ValueAccessError) -> Error {
-        Error::MissingField(original)
+impl OplogBuilder {
+    pub(crate) fn new() -> OplogBuilder {
+        OplogBuilder { filter: None }
     }
-}
 
-impl From<mongodb::Error> for Error {
-    fn from(original: mongodb::Error) -> Error {
-        Error::Database(original)
+    /// Provide an optional filter for the oplog.
+    ///
+    /// This is empty by default so all operations are returned.
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use mongodb::Client;
+    /// use oplog::bson::doc;
+    /// use oplog::Oplog;
+    ///
+    /// # async fn run() -> Result<(), oplog::Error> {
+    /// let client = Client::with_uri_str("mongodb://localhost").await?;
+    ///
+    /// let mut oplog = Oplog::builder()
+    ///     .filter(Some(doc! { "op": "i" }))
+    ///     .build(&client)
+    ///     .await?;
+    ///
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[allow(dead_code)]
+    pub fn filter(mut self, filter: Option<Document>) -> Self {
+        self.filter = filter;
+        self
+    }
+
+    /// Executes the query and builds the `Oplog` over the client provided.
+    pub async fn build(self, client: &Client) -> Result<Oplog> {
+        let coll = client.database("local").collection("oplog.rs");
+
+        let opts = FindOptions::builder()
+            .no_cursor_timeout(true)
+            .cursor_type(CursorType::Tailable)
+            .build();
+
+        let cursor = coll.find(self.filter, opts).await?;
+
+        Ok(Oplog { cursor })
     }
 }
