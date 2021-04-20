@@ -13,7 +13,8 @@ async fn main() {
 }
 
 async fn run() -> oplog::Result<()> {
-    let client = Client::with_uri_str("mongodb://localhost").await?;
+    let uri = std::env::var("MONGO_URI").unwrap_or_else(|_| "mongodb://localhost".to_string());
+    let client = Client::with_uri_str(&uri).await?;
 
     let mut oplog = Oplog::builder()
         .filter(Some(doc! { "op": "i" }))
