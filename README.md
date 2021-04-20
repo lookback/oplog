@@ -1,73 +1,51 @@
-# Oplog [![Build Status](https://travis-ci.org/mudge/oplog.svg?branch=master)](https://travis-ci.org/mudge/oplog)
+# oplog
 
-A Rust library for
-[iterating](https://doc.rust-lang.org/1.14.0/std/iter/index.html) over a
-[MongoDB replica set
-oplog](https://docs.mongodb.com/v3.0/core/replica-set-oplog/).
+A library for iterating over a MongoDB replica set oplog.
 
-**Current version:** 0.3.0  
-**Supported Rust versions:** 1.14
+Given a MongoDB `Client` connected to a replica set, this crate allows you to iterate over an
+`Oplog` as if it were a collection of statically typed `Operation`s.
 
-## Install
+## Example
 
-Install Oplog by adding the following to your `Cargo.toml`:
-
-```toml
-oplog = "0.3.0"
-```
-
-## Usage
+At its most basic, an `Oplog` will yield _all_ operations in the oplog when iterated over:
 
 ```rust
-#[macro_use]
-extern crate bson;
-extern crate mongodb;
-extern crate oplog;
+use futures::StreamExt;
+use mongodb::Client;
+use oplog::Oplog;
 
-use mongodb::{Client, ThreadedClient};
-use oplog::{Operation, Oplog, OplogBuilder};
+let client = Client::with_uri_str("mongodb://localhost").await?;
 
-fn main() {
-    let client = Client::connect("localhost", 27017).expect("Failed to connect to MongoDB.");
+let mut oplog = Oplog::new(&client).await?;
 
-    if let Ok(oplog) = Oplog::new(&client) {
-        for operation in oplog {
-            match operation {
-                Operation::Noop { timestamp, .. } => println!("No-op at {}", timestamp),
-                Operation::Insert { timestamp, .. } => println!("Insert at {}", timestamp),
-                Operation::Update { timestamp, .. } => println!("Update at {}", timestamp),
-                Operation::Delete { timestamp, .. } => println!("Delete at {}", timestamp),
-                Operation::Command { timestamp, .. } => println!("Command at {}", timestamp),
-                Operation::ApplyOps { timestamp, .. } => println!("ApplyOps at {}", timestamp),
-            }
-        }
-    }
-
-    // Or, if you want to filter out certain operations:
-
-    if let Ok(oplog) = OplogBuilder::new(&client).filter(Some(doc! { "op" => "i" })).build() {
-        for insert in oplog {
-            println!("{}", insert);
-        }
-    }
+while let Some(res) = oplog.next().await {
+    let oper = res?;
+    println!("{:?}", oper);
 }
 ```
 
-## Documentation
+Alternatively, an `Oplog` can be built with a filter via `OplogBuilder` to restrict the
+operations yielded:
 
-Full API documentation is available at http://mudge.name/oplog
+```rust
+use futures::StreamExt;
+use mongodb::bson::doc;
+use mongodb::Client;
+use oplog::Oplog;
+use std::process;
 
-## References
+let client = Client::with_uri_str("mongodb://localhost").await?;
 
-* [Iterators, Rust by Example](http://rustbyexample.com/trait/iter.html)
-* [Replication Internals](https://www.kchodorow.com/blog/2010/10/12/replication-internals/)
-* [applyOps](https://docs.mongodb.com/manual/reference/command/applyOps/)
-* [ripgrep](https://github.com/BurntSushi/ripgrep/) was invaluable as a source of idiomatic Rust code (see also [ripgrep code review](http://blog.mbrt.it/2016-12-01-ripgrep-code-review/))
+let mut oplog = Oplog::builder()
+    .filter(Some(doc! { "op": "i" }))
+    .build(&client)
+    .await?;
 
-And many thanks to [Ryman](https://github.com/Ryman) for his help along the way.
+while let Some(res) = oplog.next().await {
+    let oper = res?;
+    println!("{:?}", oper);
+}
 
-## License
+```
 
-Copyright © 2016-2018 Paul Mucur.
-
-Distributed under the MIT License.
+License: MIT
