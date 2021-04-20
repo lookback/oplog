@@ -9,7 +9,10 @@ use oplog::OplogBuilder;
 fn main() {
     let client = Client::connect("localhost", 27017).expect("Failed to connect to MongoDB.");
 
-    if let Ok(oplog) = OplogBuilder::new(&client).filter(Some(doc! { "op" => "i" })).build() {
+    if let Ok(oplog) = OplogBuilder::new(&client)
+        .filter(Some(doc! { "op" => "i" }))
+        .build()
+    {
         for insert in oplog {
             println!("{}", insert);
         }
