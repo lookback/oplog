@@ -17,7 +17,7 @@ async fn run() -> oplog::Result<()> {
     let client = Client::with_uri_str(&uri).await?;
 
     let mut oplog = Oplog::builder()
-        .filter(Some(doc! { "op": "i" }))
+        .filter(doc! { "op": "i" })
         .build(&client)
         .await?;
 

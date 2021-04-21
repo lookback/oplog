@@ -41,7 +41,7 @@
 //! let client = Client::with_uri_str("mongodb://localhost").await?;
 //!
 //! let mut oplog = Oplog::builder()
-//!     .filter(Some(doc! { "op": "i" }))
+//!     .filter(doc! { "op": "i" })
 //!     .build(&client)
 //!     .await?;
 //!
@@ -159,15 +159,15 @@ impl OplogBuilder {
     /// let client = Client::with_uri_str("mongodb://localhost").await?;
     ///
     /// let mut oplog = Oplog::builder()
-    ///     .filter(Some(doc! { "op": "i" }))
+    ///     .filter(doc! { "op": "i" })
     ///     .build(&client)
     ///     .await?;
     ///
     /// # Ok(())
     /// # }
     /// ```
-    pub fn filter(mut self, filter: Option<Document>) -> Self {
-        self.filter = filter;
+    pub fn filter(mut self, filter: Document) -> Self {
+        self.filter = Some(filter);
         self
     }
 
