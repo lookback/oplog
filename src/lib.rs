@@ -133,11 +133,15 @@ impl Stream for Oplog {
 #[derive(Clone)]
 pub struct OplogBuilder {
     filter: Option<Document>,
+    batch_size: Option<u32>,
 }
 
 impl OplogBuilder {
     pub(crate) fn new() -> OplogBuilder {
-        OplogBuilder { filter: None }
+        OplogBuilder {
+            filter: None,
+            batch_size: None,
+        }
     }
 
     /// Provide an optional filter for the oplog.
@@ -162,9 +166,16 @@ impl OplogBuilder {
     /// # Ok(())
     /// # }
     /// ```
-    #[allow(dead_code)]
     pub fn filter(mut self, filter: Option<Document>) -> Self {
         self.filter = filter;
+        self
+    }
+
+    /// Set `batch_size` option on the underlying mongodb cursor.
+    ///
+    /// Default this is not set and falls back on whatever the default is.
+    pub fn batch_size(mut self, batch_size: u32) -> Self {
+        self.batch_size = Some(batch_size);
         self
     }
 
@@ -175,6 +186,7 @@ impl OplogBuilder {
         let opts = FindOptions::builder()
             .no_cursor_timeout(true)
             .cursor_type(CursorType::Tailable)
+            .batch_size(self.batch_size)
             .build();
 
         let cursor = coll.find(self.filter, opts).await?;
