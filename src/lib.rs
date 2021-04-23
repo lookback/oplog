@@ -104,22 +104,18 @@ impl Stream for Oplog {
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let this = self.get_mut();
 
-        loop {
-            let ret = if let Some(res) = ready!(Pin::new(&mut this.cursor).poll_next(cx)) {
-                match res {
-                    Ok(v) => match Operation::new(&v) {
-                        Ok(o) => Some(Ok(o)).into(),
-                        Err(e) => Some(Err(e)).into(),
-                    },
-                    Err(e) => Some(Err(e.into())).into(),
-                }
-            } else {
-                // Underlying cursor is over. This probably indicates that the oplog.rs collection
-                // is empty. See https://jira.mongodb.org/browse/SERVER-13955
-                None.into()
-            };
-
-            break ret;
+        if let Some(res) = ready!(Pin::new(&mut this.cursor).poll_next(cx)) {
+            match res {
+                Ok(v) => match Operation::new(&v) {
+                    Ok(o) => Some(Ok(o)).into(),
+                    Err(e) => Some(Err(e)).into(),
+                },
+                Err(e) => Some(Err(e.into())).into(),
+            }
+        } else {
+            // Underlying cursor is over. This probably indicates that the oplog.rs collection
+            // is empty. See https://jira.mongodb.org/browse/SERVER-13955
+            None.into()
         }
     }
 }
