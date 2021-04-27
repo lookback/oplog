@@ -23,7 +23,7 @@ pub enum Operation {
         /// The time of the operation.
         timestamp: DateTime<Utc>,
         /// The message associated with this operation.
-        message: String,
+        message: Option<String>,
     },
     /// An insert of a document into a specific database and collection.
     Insert {
@@ -136,13 +136,18 @@ impl Operation {
     fn from_noop(document: &Document) -> Result<Operation> {
         let h = document.get_i64("h")?;
         let ts = document.get_timestamp("ts")?;
-        let o = document.get_document("o")?;
-        let msg = o.get_str("msg")?;
+        // We don't always get a document in "o"
+        let message = document
+            .get("o")
+            .and_then(|d| d.as_document())
+            .and_then(|d| d.get("msg"))
+            .and_then(|d| d.as_str())
+            .map(|s| s.to_string());
 
         Ok(Operation::Noop {
             id: h,
             timestamp: timestamp_to_datetime(ts),
-            message: msg.into(),
+            message,
         })
     }
 
@@ -235,7 +240,7 @@ impl fmt::Display for Operation {
                 timestamp,
                 ref message,
             } => {
-                write!(f, "No-op #{} at {}: {}", id, timestamp, message)
+                write!(f, "No-op #{} at {}: {:?}", id, timestamp, message)
             }
             Operation::Insert {
                 id,
@@ -340,7 +345,7 @@ mod tests {
             Operation::Noop {
                 id: -2135725856567446411i64,
                 timestamp: Utc.timestamp(1479419535, 0),
-                message: "initiating set".into(),
+                message: Some("initiating set".into()),
             }
         );
     }
